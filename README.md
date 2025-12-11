@@ -87,3 +87,10 @@ python main.py
 
 
 (or whichever script your project uses)
+
+4. Training the drone
+Run the file train.py to start training. Blocks.exe should be opened before running. It will display the drone training
+Custom actor and critic networks are defined in custom_networks.py
+The policy for training ddpg is defined in custom_policy.py
+Environment defined in airsim_drone_env.py
+
