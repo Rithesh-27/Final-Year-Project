@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from stable_baselines3.common.policies import BasePolicy
 
 class LidarFeatureExtractor(nn.Module):
     """
@@ -32,10 +31,6 @@ class LidarFeatureExtractor(nn.Module):
             batch_first=True
         )
 
-        # FC layers
-        self.fc1 = nn.Linear(48, 128)
-        self.fc2 = nn.Linear(128, 48)
-
     def forward(self, obs):
 
         # ---------- 1. Keep only the depth image ----------
@@ -65,11 +60,8 @@ class LidarFeatureExtractor(nn.Module):
         gru_out, _ = self.gru(x)
         x = gru_out[:, -1, :]    # last time step output
 
-        # ---------- 7. Dense layers ----------
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-
         return x     # shape: (batch, 48)
+    
     
 class CustomActor(nn.Module):
     def __init__(self, feature_extractor):
@@ -77,8 +69,9 @@ class CustomActor(nn.Module):
         self.fe = feature_extractor
 
         # 48 + 2 (d, theta)
-        self.fc1 = nn.Linear(48 + 2, 32)
-        self.fc2 = nn.Linear(32, 2)
+        self.fc1 = nn.Linear(48 + 2, 64)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64,2)
 
     def forward(self, obs):
         extras = obs[:,0,0,256:]
@@ -86,10 +79,10 @@ class CustomActor(nn.Module):
         x = self.fe(obs)
         x = torch.cat([x,extras], dim=1)
 
-        x = torch.relu(self.fc1(x))
-        x = torch.tanh(self.fc2(x))   # scale later in env
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = torch.tanh(self.fc3(x))
         return x
-    
     
 class CustomCritic(nn.Module):
     def __init__(self, feature_extractor):
@@ -97,14 +90,14 @@ class CustomCritic(nn.Module):
         self.fe = feature_extractor
 
         # Critic 1
-        self.fc1_1 = nn.Linear(48 + 2 + 2, 32)
-        self.fc2_1 = nn.Linear(32, 32)
-        self.fc3_1 = nn.Linear(32, 1)
+        self.fc1_1 = nn.Linear(48 + 2 + 2, 64)
+        self.fc2_1 = nn.Linear(64, 64)
+        self.fc3_1 = nn.Linear(64, 1)
 
         # Critic 2 (independent parameters)
-        self.fc1_2 = nn.Linear(48 + 2 + 2, 32)
-        self.fc2_2 = nn.Linear(32, 32)
-        self.fc3_2 = nn.Linear(32, 1)
+        self.fc1_2 = nn.Linear(48 + 2 + 2, 64)
+        self.fc2_2 = nn.Linear(64, 64)
+        self.fc3_2 = nn.Linear(64, 1)
 
     def q1_forward(self, obs, action):
         """Return only the first Q-value (SB3 uses this for actor loss)."""
@@ -134,4 +127,61 @@ class CustomCritic(nn.Module):
 
         return q1, q2
 
-    
+class SimpleActor(nn.Module):
+    def __init__(self, obs_dim=2, act_dim=2):
+        super().__init__()
+
+        self.fc1 = nn.Linear(obs_dim, 64)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, act_dim)
+
+    def forward(self, obs):
+        """
+        obs: (batch, 2) -> [distance, bearing]
+        """
+        x = F.relu(self.fc1(obs))
+        x = F.relu(self.fc2(x))
+        action = torch.tanh(self.fc3(x))  # [-1, 1]
+        return action
+
+class SimpleCritic(nn.Module):
+    def __init__(self, obs_dim=2, act_dim=2):
+        super().__init__()
+
+        # Q1 network
+        self.q1_fc1 = nn.Linear(obs_dim + act_dim, 64)
+        self.q1_fc2 = nn.Linear(64, 64)
+        self.q1_fc3 = nn.Linear(64, 1)
+
+        # Q2 network
+        self.q2_fc1 = nn.Linear(obs_dim + act_dim, 64)
+        self.q2_fc2 = nn.Linear(64, 64)
+        self.q2_fc3 = nn.Linear(64, 1)
+
+    def q1_forward(self, obs, action):
+        """
+        Used by SB3 for actor loss
+        """
+        x = torch.cat([obs, action], dim=1)
+        x = F.relu(self.q1_fc1(x))
+        x = F.relu(self.q1_fc2(x))
+        q1 = self.q1_fc3(x)
+        return q1
+
+    def forward(self, obs, action):
+        """
+        Returns Q1, Q2
+        """
+        xu = torch.cat([obs, action], dim=1)
+
+        # Q1
+        q1 = F.relu(self.q1_fc1(xu))
+        q1 = F.relu(self.q1_fc2(q1))
+        q1 = self.q1_fc3(q1)
+
+        # Q2
+        q2 = F.relu(self.q2_fc1(xu))
+        q2 = F.relu(self.q2_fc2(q2))
+        q2 = self.q2_fc3(q2)
+
+        return q1, q2

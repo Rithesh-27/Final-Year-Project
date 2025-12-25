@@ -1,7 +1,6 @@
 import torch
-from torch import nn
 from stable_baselines3.td3.policies import TD3Policy
-from custom_networks import LidarFeatureExtractor, CustomActor, CustomCritic
+from custom_networks import LidarFeatureExtractor, CustomActor, CustomCritic, SimpleActor, SimpleCritic
 
 
 class CustomDDPGPolicy(TD3Policy):
@@ -54,6 +53,64 @@ class CustomDDPGPolicy(TD3Policy):
 
     # SB3 requires this for eval/train mode switching
     def set_training_mode(self, mode: bool) -> None:
+        self.training = mode
+
+        self.actor.train(mode)
+        self.critic.train(mode)
+        self.actor_target.train(mode)
+        self.critic_target.train(mode)
+
+class SimpleDDPGPolicy(TD3Policy):
+
+    def _build(self, lr_schedule):
+        """
+        Build actor, critic, and target networks.
+        No feature extractors needed for low-dimensional observations.
+        """
+
+        obs_dim = self.observation_space.shape[0]   # = 2
+        act_dim = self.action_space.shape[0]        # = 2
+
+        # -----------------------
+        # Actor / Target Actor
+        # -----------------------
+        self.actor = SimpleActor(obs_dim, act_dim).to(self.device)
+        self.actor_target = SimpleActor(obs_dim, act_dim).to(self.device)
+        self.actor_target.load_state_dict(self.actor.state_dict())
+
+        # -----------------------
+        # Critic / Target Critic
+        # -----------------------
+        self.critic = SimpleCritic(obs_dim, act_dim).to(self.device)
+        self.critic_target = SimpleCritic(obs_dim, act_dim).to(self.device)
+        self.critic_target.load_state_dict(self.critic.state_dict())
+
+        # -----------------------
+        # Register for SB3
+        # -----------------------
+        self._actor = self.actor
+        self._critic = self.critic
+
+    def _setup_model(self):
+        """
+        Create optimizers.
+        SB3 requires actor_optimizer and critic_optimizer.
+        """
+
+        self.actor_optimizer = torch.optim.Adam(
+            self.actor.parameters(), lr=1e-4
+        )
+        self.actor.optimizer = self.actor_optimizer
+
+        self.critic_optimizer = torch.optim.Adam(
+            self.critic.parameters(), lr=1e-3
+        )
+        self.critic.optimizer = self.critic_optimizer
+
+    def set_training_mode(self, mode: bool) -> None:
+        """
+        Required by SB3 to switch between train/eval.
+        """
         self.training = mode
 
         self.actor.train(mode)

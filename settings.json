@@ -1,7 +1,7 @@
 {
   "SettingsVersion": 1.2,
   "SimMode": "Multirotor",
-  "ClockSpeed": 5.0,
+  "ClockSpeed": 1.0,
   "Vehicles": {
     "Drone1": {
       "VehicleType": "SimpleFlight",
@@ -13,14 +13,13 @@
           "Enabled": true,
           "External": false,
           "DataFrame": "SensorLocalFrame",
-          "NumberOfChannels": 32,
+          "NumberOfChannels": 64,
           "PointsPerSecond": 20000,
-          "Range": 100,
+          "Range": 50,
           "RotationsPerSecond": 10,
           "VerticalFOVUpper": 15,
           "VerticalFOVLower": -15,
-          "Position": { "X": 0, "Y": 0, "Z": -0.2 },
-          "Orientation": { "Pitch": 0, "Roll": 0, "Yaw": 0 }
+          "UpdateFrequency": 5
         }
       }
     }

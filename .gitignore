@@ -1,2 +1,6 @@
 /airsim_env
 Blocks/
+/checkpoints
+/tb_logs
+ddpg_model_attacked.zip
+AirSim/navigation_test.py

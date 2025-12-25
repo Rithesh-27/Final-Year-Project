@@ -1,52 +1,90 @@
 import airsim
-import time
-import os
+import matplotlib.pyplot as plt
 import numpy as np
-import cv2
+import time
+from set_course import build_course
+from blocks_script import start_blcoks,stop_blocks
 
-def lidar_to_depth_image(points, img_h=64, img_w=256, max_range=100.0):
+def lidar_to_depth_image(
+    pts,
+    num_channels=64,
+    h_bins=256,
+    v_fov_up=15.0,
+    v_fov_down=-15.0,
+    max_range=50.0
+):
     """
-    Convert AirSim LiDAR point cloud to a 2D depth image using (y,z) projection.
-    
-    points: np.array of shape (N, 3)
-    img_h, img_w: desired output image size
-    max_range: value used to normalise distance (paper uses 100m)
+    Convert LiDAR point cloud to cylindrical depth image.
+
+    pts: (N,3) point cloud in sensor frame
+    returns: (num_channels, h_bins) depth image
     """
-    
-    # Step 1: Compute distance of each point from drone
-    distances = np.linalg.norm(points, axis=1)
-    
-    # Step 2: Normalise distances to [0,1]
-    norm_dist = np.clip(distances / max_range, 0.0, 1.0)
-    
-    # Extract y and z coordinates
-    y = points[:, 1]
-    z = points[:, 2]
-    
-    # Step 3: Convert y,z to image pixel indices ------------------
-    
-    # Map y coordinate range [-max_range, +max_range] → [0, img_w)
-    y_idx = ((y + max_range) / (2 * max_range)) * (img_w - 1)
-    
-    # Map z coordinate range [-max_range, +max_range] → [0, img_h)
-    z_idx = ((z + max_range) / (2 * max_range)) * (img_h - 1)
-    
-    # Convert to integer pixel indices
-    y_idx = np.int32(np.clip(y_idx, 0, img_w - 1))
-    z_idx = np.int32(np.clip(z_idx, 0, img_h - 1))
-    
-    # Step 4: Create depth image and place values
-    depth_image = np.ones((img_h, img_w), dtype=np.float32)  # initialize with 1 (max range)
-    
-    for i in range(len(points)):
-        depth_image[z_idx[i], y_idx[i]] = norm_dist[i]
-    
-    return depth_image
+
+    if pts.shape[0] == 0:
+        return np.ones((num_channels, h_bins), dtype=np.float32)
+
+    x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+
+    # -------------------------
+    # 1. Compute range
+    # -------------------------
+    r = np.sqrt(x**2 + y**2 + z**2)
+    valid = (r > 0.1) & (r < max_range)
+    x, y, z, r = x[valid], y[valid], z[valid], r[valid]
+
+    # -------------------------
+    # 2. Azimuth (horizontal)
+    # -------------------------
+    azimuth = np.arctan2(y, x)           # [-pi, pi]
+    azimuth = (azimuth + np.pi) / (2 * np.pi)  # [0,1]
+    col = (azimuth * h_bins).astype(np.int32)
+    col = np.clip(col, 0, h_bins - 1)
+
+    # -------------------------
+    # 3. Elevation (vertical)
+    # -------------------------
+    elevation = np.arcsin(z / r) * 180 / np.pi  # degrees
+
+    v_range = v_fov_up - v_fov_down
+    row = (1.0 - (elevation - v_fov_down) / v_range) * num_channels
+    row = row.astype(np.int32)
+    row = np.clip(row, 0, num_channels - 1)
+
+    # -------------------------
+    # 4. Create depth image
+    # -------------------------
+    depth = np.ones((num_channels, h_bins), dtype=np.float32) * max_range
+
+    for i in range(r.shape[0]):
+        if r[i] < depth[row[i], col[i]]:
+            depth[row[i], col[i]] = r[i]
+
+    # -------------------------
+    # 5. Normalize
+    # -------------------------
+    depth = depth / max_range
+    depth = np.clip(depth, 0.0, 1.0)
+
+    return depth
+
+def visualize_depth(depth):
+    """
+    depth: (H, W) normalized to [0,1]
+    """
+    plt.figure(figsize=(10, 3))
+    # plt.imshow(depth, cmap="gray", aspect="auto")
+    plt.imshow(1.0 - depth, cmap="inferno", aspect="auto")
+    plt.colorbar(label="Normalized Depth")
+    plt.xlabel("Azimuth (left → right)")
+    plt.ylabel("Vertical Channels (top → bottom)")
+    plt.title("LiDAR Depth Image")
+    plt.show()
 
 
 # ---------------------------------------------
 # CONNECT TO AIRSIM
 # ---------------------------------------------
+start_blcoks()
 client = airsim.MultirotorClient()
 client.confirmConnection()
 
@@ -54,18 +92,22 @@ client.confirmConnection()
 client.enableApiControl(True)
 client.armDisarm(True)
 
-# takeoff
-client.takeoffAsync().join()
-
-print(client.simListSceneObjects())
+build_course(client)
 
 print("Drone is ready!")
+time.sleep(0.1)
+
+_ = client.getLidarData(lidar_name="Lidar1", vehicle_name="Drone1") # Flush old points
+time.sleep(0.05)
 
 # -----------------------------------------------
 # CREATE OUTPUT FOLDER
 # -----------------------------------------------
+lidar = client.getLidarData(lidar_name="Lidar1", vehicle_name="Drone1")
+pts = np.array(lidar.point_cloud, dtype=np.float32).reshape(-1,3)
 
-
+depth_image = lidar_to_depth_image(pts)
+image = visualize_depth(depth_image)
 
 # -------------------------------------
 # LAND DRONE
@@ -73,3 +115,5 @@ print("Drone is ready!")
 client.landAsync(vehicle_name="Drone1").join()
 client.armDisarm(False, "Drone1")
 client.enableApiControl(False, "Drone1")
+
+stop_blocks()
